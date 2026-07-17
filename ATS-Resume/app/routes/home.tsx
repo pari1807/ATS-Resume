@@ -1,6 +1,6 @@
 import type { Route } from "./+types/home";
 import ResumeCard from "../components/ResumeCard";
-import { resumes } from "../../constants";
+import { useResumeStore } from "../lib/store";
 
 export function meta({ }: Route.MetaArgs) {
   return [
@@ -10,6 +10,8 @@ export function meta({ }: Route.MetaArgs) {
 }
 
 export default function Home() {
+  const { resumes } = useResumeStore();
+
   return (
     <main className="bg-[url('/images/bg-main.svg')] bg-cover bg-no-repeat bg-center">
       <section className="main-section">
