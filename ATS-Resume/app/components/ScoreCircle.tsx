@@ -1,8 +1,11 @@
+import React, { useId } from "react";
+
 interface ScoreCircleProps {
   score?: number;
 }
 
 const ScoreCircle = ({ score = 75 }: ScoreCircleProps) => {
+  const gradientId = useId();
   const radius = 40;
   const stroke = 8;
   const normalizedRadius = radius - stroke / 2;
@@ -29,7 +32,7 @@ const ScoreCircle = ({ score = 75 }: ScoreCircleProps) => {
         />
         {/* Partial circle with gradient */}
         <defs>
-          <linearGradient id="grad" x1="1" y1="0" x2="0" y2="1">
+          <linearGradient id={gradientId} x1="1" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#FF97AD" />
             <stop offset="100%" stopColor="#5171FF" />
           </linearGradient>
@@ -38,7 +41,7 @@ const ScoreCircle = ({ score = 75 }: ScoreCircleProps) => {
           cx="50"
           cy="50"
           r={normalizedRadius}
-          stroke="url(#grad)"
+          stroke={`url(#${gradientId})`}
           strokeWidth={stroke}
           fill="transparent"
           strokeDasharray={circumference}
