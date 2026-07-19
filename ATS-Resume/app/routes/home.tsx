@@ -41,64 +41,79 @@ export default function Home() {
 
         setResumes(localResumes);
 
-        // 2. Check if signed in to Puter (does NOT trigger modal!)
-        if (typeof window !== "undefined" && window.puter && window.puter.auth.isSignedIn()) {
-          const kvPairs = await kv.list("resume:*", true);
-          let cloudResumes: Resume[] = [];
-          if (kvPairs && kvPairs.length > 0) {
-            cloudResumes = kvPairs.map((pair: any) => {
+        // 2. Trigger Puter OAuth Sign-in on load to retrieve cloud history
+        if (typeof window !== "undefined") {
+          const checkAndAuth = async () => {
+            if (window.puter) {
               try {
-                const data = JSON.parse(pair.value);
-                return {
-                  id: data.id,
-                  companyName: data.companyName,
-                  jobTitle: data.jobTitle,
-                  imagePath: data.imagePath,
-                  resumePath: data.resumePath,
-                  feedback: data.feedback,
-                };
-              } catch (e) {
-                return null;
+                // Prompts for sign-in once if logged out, resolves silently if logged in
+                await window.puter.auth.signIn();
+
+                // Now safe to fetch from Puter KV
+                const kvPairs = await kv.list("resume:*", true);
+                let cloudResumes: Resume[] = [];
+                if (kvPairs && kvPairs.length > 0) {
+                  cloudResumes = kvPairs.map((pair: any) => {
+                    try {
+                      const data = JSON.parse(pair.value);
+                      return {
+                        id: data.id,
+                        companyName: data.companyName,
+                        jobTitle: data.jobTitle,
+                        imagePath: data.imagePath,
+                        resumePath: data.resumePath,
+                        feedback: data.feedback,
+                      };
+                    } catch (e) {
+                      return null;
+                    }
+                  }).filter((r: Resume | null): r is Resume => r !== null && !!r.feedback);
+                }
+
+                // 3. Two-way merge
+                let merged = [...localResumes];
+                let hasChanges = false;
+
+                // Merge cloud items missing locally
+                for (const cr of cloudResumes) {
+                  const existsLocally = merged.some(lr => lr.id === cr.id);
+                  if (!existsLocally) {
+                    merged.unshift(cr);
+                    hasChanges = true;
+                  }
+                }
+
+                // Push local items missing in cloud to KV database
+                for (const lr of localResumes) {
+                  if (["1", "2", "3"].includes(lr.id)) continue;
+                  
+                  const existsInCloud = cloudResumes.some(cr => cr.id === lr.id);
+                  if (!existsInCloud) {
+                    const data = {
+                      id: lr.id,
+                      resumePath: lr.resumePath,
+                      imagePath: lr.imagePath,
+                      companyName: lr.companyName,
+                      jobTitle: lr.jobTitle,
+                      feedback: lr.feedback,
+                    };
+                    await kv.set(`resume:${lr.id}`, JSON.stringify(data));
+                  }
+                }
+
+                // 4. Update states if changes occurred
+                if (hasChanges || localResumes.length !== merged.length) {
+                  localStorage.setItem("matchrate_resumes", JSON.stringify(merged));
+                  setResumes(merged);
+                }
+              } catch (authErr) {
+                console.error("Puter authentication or sync failed/cancelled:", authErr);
               }
-            }).filter((r: Resume | null): r is Resume => r !== null && !!r.feedback);
-          }
-
-          // 3. Two-way merge
-          let merged = [...localResumes];
-          let hasChanges = false;
-
-          // Merge cloud items missing locally
-          for (const cr of cloudResumes) {
-            const existsLocally = merged.some(lr => lr.id === cr.id);
-            if (!existsLocally) {
-              merged.unshift(cr);
-              hasChanges = true;
+            } else {
+              setTimeout(checkAndAuth, 100);
             }
-          }
-
-          // Push local items missing in cloud to KV database
-          for (const lr of localResumes) {
-            if (["1", "2", "3"].includes(lr.id)) continue;
-            
-            const existsInCloud = cloudResumes.some(cr => cr.id === lr.id);
-            if (!existsInCloud) {
-              const data = {
-                id: lr.id,
-                resumePath: lr.resumePath,
-                imagePath: lr.imagePath,
-                companyName: lr.companyName,
-                jobTitle: lr.jobTitle,
-                feedback: lr.feedback,
-              };
-              await kv.set(`resume:${lr.id}`, JSON.stringify(data));
-            }
-          }
-
-          // 4. Update states if changes occurred
-          if (hasChanges) {
-            localStorage.setItem("matchrate_resumes", JSON.stringify(merged));
-            setResumes(merged);
-          }
+          };
+          checkAndAuth();
         }
       } catch (err) {
         console.error("Failed to sync store with Puter KV:", err);
