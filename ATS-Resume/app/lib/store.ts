@@ -8,7 +8,13 @@ interface ResumeStore {
 }
 
 export const useResumeStore = create<ResumeStore>((set) => ({
-  resumes: initialResumes,
-  addResume: (resume) => set((state) => ({ resumes: [resume, ...state.resumes] })),
+  resumes: [],
+  addResume: (resume) => set((state) => {
+    const updated = [resume, ...state.resumes];
+    if (typeof window !== "undefined") {
+      localStorage.setItem("matchrate_resumes", JSON.stringify(updated));
+    }
+    return { resumes: updated };
+  }),
   setResumes: (resumes) => set({ resumes }),
 }));

@@ -20,32 +20,85 @@ export default function Home() {
   useEffect(() => {
     const syncWithKV = async () => {
       try {
-        const kvPairs = await kv.list("resume:*", true);
-        if (kvPairs && kvPairs.length > 0) {
-          const kvResumes: Resume[] = kvPairs.map((pair: any) => {
-            const data = JSON.parse(pair.value);
-            return {
-              id: data.id,
-              companyName: data.companyName,
-              jobTitle: data.jobTitle,
-              imagePath: data.imagePath,
-              resumePath: data.resumePath,
-              feedback: data.feedback,
-            };
-          });
+        // 1. Load from localStorage immediately (no popup!)
+        const localData = typeof window !== "undefined" ? localStorage.getItem("matchrate_resumes") : null;
+        let localResumes: Resume[] = [];
+        if (localData) {
+          try {
+            localResumes = JSON.parse(localData);
+          } catch (e) {
+            console.error("Failed to parse local resumes cache:", e);
+          }
+        }
 
-          // Filter out null/empty analyses
-          const validKvResumes = kvResumes.filter(r => r.feedback);
+        // If no local resumes, seed with initial mock data
+        if (localResumes.length === 0) {
+          localResumes = [...initialResumes];
+          if (typeof window !== "undefined") {
+            localStorage.setItem("matchrate_resumes", JSON.stringify(localResumes));
+          }
+        }
 
-          // Combine with mock initialResumes (Google, Microsoft, Apple)
-          const combined = [...validKvResumes];
-          initialResumes.forEach((mock) => {
-            if (!combined.some((r) => r.id === mock.id)) {
-              combined.push(mock);
+        setResumes(localResumes);
+
+        // 2. Check if signed in to Puter (does NOT trigger modal!)
+        if (typeof window !== "undefined" && window.puter && window.puter.auth.isSignedIn()) {
+          const kvPairs = await kv.list("resume:*", true);
+          let cloudResumes: Resume[] = [];
+          if (kvPairs && kvPairs.length > 0) {
+            cloudResumes = kvPairs.map((pair: any) => {
+              try {
+                const data = JSON.parse(pair.value);
+                return {
+                  id: data.id,
+                  companyName: data.companyName,
+                  jobTitle: data.jobTitle,
+                  imagePath: data.imagePath,
+                  resumePath: data.resumePath,
+                  feedback: data.feedback,
+                };
+              } catch (e) {
+                return null;
+              }
+            }).filter((r: Resume | null): r is Resume => r !== null && !!r.feedback);
+          }
+
+          // 3. Two-way merge
+          let merged = [...localResumes];
+          let hasChanges = false;
+
+          // Merge cloud items missing locally
+          for (const cr of cloudResumes) {
+            const existsLocally = merged.some(lr => lr.id === cr.id);
+            if (!existsLocally) {
+              merged.unshift(cr);
+              hasChanges = true;
             }
-          });
+          }
 
-          setResumes(combined);
+          // Push local items missing in cloud to KV database
+          for (const lr of localResumes) {
+            if (["1", "2", "3"].includes(lr.id)) continue;
+            
+            const existsInCloud = cloudResumes.some(cr => cr.id === lr.id);
+            if (!existsInCloud) {
+              const data = {
+                id: lr.id,
+                resumePath: lr.resumePath,
+                imagePath: lr.imagePath,
+                companyName: lr.companyName,
+                jobTitle: lr.jobTitle,
+                feedback: lr.feedback,
+              };
+              await kv.set(`resume:${lr.id}`, JSON.stringify(data));
+            }
+          }
+
+          // 4. Update states if changes occurred
+          if (hasChanges) {
+            localStorage.setItem("matchrate_resumes", JSON.stringify(merged));
+            setResumes(merged);
+          }
         }
       } catch (err) {
         console.error("Failed to sync store with Puter KV:", err);
