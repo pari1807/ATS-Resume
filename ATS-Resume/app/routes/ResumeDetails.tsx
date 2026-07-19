@@ -1,15 +1,105 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { useParams, Link } from "react-router";
 import { useResumeStore } from "../lib/store";
+import { usePuterStore } from "~/lib/puter";
 import ScoreCircle from "../components/ScoreCircle";
 
 export default function ResumeDetails() {
   const { id } = useParams();
   const { resumes } = useResumeStore();
+  const { kv } = usePuterStore();
 
-  // Find active resume
-  const resume = resumes.find((r) => r.id === id);
+  const [resume, setResume] = useState<Resume | null>(null);
+  const [isLoadingKV, setIsLoadingKV] = useState(true);
+
+  useEffect(() => {
+    // 1. Check local Zustand store
+    const found = resumes.find((r) => r.id === id);
+    if (found) {
+      setResume(found);
+      setIsLoadingKV(false);
+    } else {
+      // 2. Fetch from Puter Key-Value cloud storage
+      const loadFromKV = async () => {
+        try {
+          const dataStr = await kv.get(`resume:${id}`);
+          if (dataStr) {
+            setResume(JSON.parse(dataStr));
+          }
+        } catch (err) {
+          console.error("Failed to load resume from Puter KV:", err);
+        } finally {
+          setIsLoadingKV(false);
+        }
+      };
+      loadFromKV();
+    }
+  }, [id, resumes]);
+
   const isMockResume = resume ? ["1", "2", "3"].includes(resume.id) : false;
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!resume) return;
+
+    let active = true;
+    let urlPdf = "";
+    let urlImg = "";
+
+    const loadAssets = async () => {
+      // Load PDF
+      if (!isMockResume && resume.resumePath && resume.resumePath !== "#") {
+        try {
+          const blob = await window.puter.fs.read(resume.resumePath);
+          if (active) {
+            urlPdf = URL.createObjectURL(blob);
+            setPdfUrl(urlPdf);
+          }
+        } catch (err) {
+          console.error("Failed to load PDF from Puter Storage:", err);
+        }
+      }
+
+      // Load Image preview representation
+      if (!isMockResume && resume.imagePath) {
+        try {
+          const blob = await window.puter.fs.read(resume.imagePath);
+          if (active) {
+            urlImg = URL.createObjectURL(blob);
+            setImageUrl(urlImg);
+          }
+        } catch (err) {
+          console.error("Failed to load image preview from Puter Storage:", err);
+        }
+      } else if (isMockResume) {
+        setImageUrl(resume.imagePath);
+      }
+    };
+
+    loadAssets();
+
+    return () => {
+      active = false;
+      if (urlPdf) URL.revokeObjectURL(urlPdf);
+      if (urlImg) URL.revokeObjectURL(urlImg);
+    };
+  }, [resume, isMockResume]);
+
+  if (isLoadingKV) {
+    return (
+      <main className="max-w-md mx-auto pt-32 px-4 text-center select-none">
+        <div className="glass-panel p-8 bg-white/95 space-y-6">
+          <div className="w-16 h-16 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-primary-500 mx-auto pulse-glow">
+            <svg className="w-8 h-8 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89H18v3" />
+            </svg>
+          </div>
+          <p className="text-xs font-semibold text-slate-400">Loading analysis from Puter Cloud...</p>
+        </div>
+      </main>
+    );
+  }
 
   if (!resume) {
     return (
@@ -64,14 +154,21 @@ export default function ResumeDetails() {
               </span>
             </div>
             
-            {resume.resumePath && resume.resumePath !== "#" && !isMockResume ? (
+            {pdfUrl ? (
               <div className="w-full h-[600px] rounded-2xl overflow-hidden border border-brand-border bg-slate-50 shadow-inner">
-                <iframe src={resume.resumePath} className="w-full h-full" title="Resume Document" />
+                <iframe src={pdfUrl} className="w-full h-full" title="Resume Document" />
+              </div>
+            ) : !isMockResume && resume.resumePath && resume.resumePath !== "#" ? (
+              <div className="w-full h-[600px] rounded-2xl border border-brand-border bg-slate-50/50 flex flex-col items-center justify-center space-y-3 animate-pulse">
+                <svg className="w-10 h-10 text-primary-500 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                <p className="text-xs font-semibold text-slate-400">Loading document from Puter Storage...</p>
               </div>
             ) : (
               <div className="flex-1 min-h-[450px] flex items-center justify-center relative bg-brand-bg rounded-2xl border border-dashed border-brand-border p-2">
                 <img
-                  src={resume.imagePath}
+                  src={imageUrl || "/images/resume_01.png"}
                   alt="Resume preview"
                   className="max-h-[500px] w-auto object-contain rounded-xl shadow-md border border-brand-border bg-white"
                 />

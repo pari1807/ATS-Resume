@@ -2,7 +2,9 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import FileUploader from "~/components/FileUploader";
 import { useResumeStore } from "~/lib/store";
-import { extractTextFromPdf } from "~/lib/pdf";
+import { usePuterStore } from "~/lib/puter";
+import { convertPdfToImage } from "~/lib/pdf2img";
+import { generateUUID } from "~/lib/utils";
 import { AIResponseFormat, prepareInstructions } from "../../constants";
 
 export default function Upload() {
@@ -11,6 +13,7 @@ export default function Upload() {
   const [file, setFile] = useState<File | null>(null);
 
   const { addResume } = useResumeStore();
+  const { fs, ai, kv } = usePuterStore();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -32,53 +35,92 @@ export default function Upload() {
 
     setIsProcessing(true);
     try {
-      setStatusText("Extracting text from PDF resume...");
-      const resumeText = await extractTextFromPdf(file);
-
-      if (!resumeText.trim()) {
-        throw new Error("Could not extract text from the PDF. Please make sure the PDF has readable text.");
+      setStatusText("Uploading the file...");
+      const uploadedFile = await fs.upload([file]);
+      if (!uploadedFile) {
+        setStatusText("Error: Failed to upload file");
+        setIsProcessing(false);
+        return;
       }
 
-      setStatusText("Analyzing resume compatibility using Puter AI...");
-      const instructions = prepareInstructions({
-        jobTitle,
-        jobDescription,
-        AIResponseFormat,
-      });
-      const prompt = `${instructions}\n\nResume Text:\n${resumeText}`;
-
-      const response = await puter.ai.chat(prompt);
-
-      setStatusText("Processing evaluation results...");
-      let responseText = response.toString().trim();
-
-      // Clean up markdown block format if present
-      if (responseText.startsWith("```json")) {
-        responseText = responseText.substring(7);
-      } else if (responseText.startsWith("```")) {
-        responseText = responseText.substring(3);
+      setStatusText("Converting to image...");
+      const imageFile = await convertPdfToImage(file);
+      if (!imageFile.file) {
+        setStatusText("Error: Failed to convert PDF to image");
+        setIsProcessing(false);
+        return;
       }
-      if (responseText.endsWith("```")) {
-        responseText = responseText.substring(0, responseText.length - 3);
+
+      setStatusText("Uploading the image...");
+      const uploadedImage = await fs.upload([imageFile.file]);
+      if (!uploadedImage) {
+        setStatusText("Error: Failed to upload image");
+        setIsProcessing(false);
+        return;
       }
-      responseText = responseText.trim();
 
-      const feedback = JSON.parse(responseText);
-
-      const id = Date.now().toString();
-      const resumePath = URL.createObjectURL(file);
-      const imagePath = "/images/resume_01.png"; // Default fallback preview representation
-
-      addResume({
-        id,
+      setStatusText("Preparing data...");
+      const uuid = generateUUID();
+      const data = {
+        id: uuid,
+        resumePath: uploadedFile.path,
+        imagePath: uploadedImage.path,
         companyName,
         jobTitle,
-        imagePath,
-        resumePath,
-        feedback,
+        jobDescription,
+        feedback: "" as any,
+      };
+      await kv.set(`resume:${uuid}`, JSON.stringify(data));
+
+      setStatusText("Analyzing...");
+      const feedback = await ai.feedback(
+        uploadedFile.path,
+        prepareInstructions({ jobTitle, jobDescription, AIResponseFormat })
+      );
+
+      if (!feedback) {
+        setStatusText("Error: Failed to analyze resume");
+        setIsProcessing(false);
+        return;
+      }
+
+      const feedbackText = typeof feedback.message.content === "string"
+        ? feedback.message.content
+        : feedback.message.content[0].text;
+
+      let parsedFeedback = null;
+      try {
+        let responseText = feedbackText.trim();
+        if (responseText.startsWith("```json")) {
+          responseText = responseText.substring(7);
+        } else if (responseText.startsWith("```")) {
+          responseText = responseText.substring(3);
+        }
+        if (responseText.endsWith("```")) {
+          responseText = responseText.substring(0, responseText.length - 3);
+        }
+        responseText = responseText.trim();
+        parsedFeedback = JSON.parse(responseText);
+      } catch (jsonErr) {
+        console.error("JSON parsing error, falling back:", jsonErr);
+        parsedFeedback = JSON.parse(feedbackText);
+      }
+
+      data.feedback = parsedFeedback;
+      await kv.set(`resume:${uuid}`, JSON.stringify(data));
+
+      // Synchronize to the local Zustand store so dashboard lists it instantly
+      addResume({
+        id: uuid,
+        companyName,
+        jobTitle,
+        imagePath: uploadedImage.path,
+        resumePath: uploadedFile.path,
+        feedback: parsedFeedback,
       });
 
-      navigate(`/resume/${id}`);
+      setStatusText("Analysis complete, redirecting...");
+      navigate(`/resume/${uuid}`);
     } catch (err: any) {
       console.error("Analysis error:", err);
       alert("Failed to analyze resume: " + err.message);
@@ -94,9 +136,9 @@ export default function Upload() {
   // Determine active stepper index
   const getActiveStep = () => {
     const text = statusText.toLowerCase();
-    if (text.includes("extracting")) return 0;
-    if (text.includes("analyzing") || text.includes("generating")) return 1;
-    if (text.includes("processing") || text.includes("parsing")) return 2;
+    if (text.includes("file") || text.includes("converting") || text.includes("image")) return 0;
+    if (text.includes("preparing") || text.includes("analyzing") || text.trim() === "analyzing...") return 1;
+    if (text.includes("complete") || text.includes("redirecting")) return 2;
     return 0;
   };
   const activeStep = getActiveStep();

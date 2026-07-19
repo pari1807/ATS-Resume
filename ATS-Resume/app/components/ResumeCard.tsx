@@ -1,11 +1,47 @@
 import { Link } from "react-router";
 import ScoreCircle from "./ScoreCircle";
+import React, { useState, useEffect } from "react";
 
 interface ResumeCardProps {
   resume: Resume;
 }
 
 export default function ResumeCard({ resume }: ResumeCardProps) {
+  const isMockResume = ["1", "2", "3"].includes(resume.id);
+  const [imageUrl, setImageUrl] = useState<string>("");
+
+  useEffect(() => {
+    let active = true;
+    let url = "";
+
+    const loadImg = async () => {
+      if (!isMockResume && resume.imagePath) {
+        try {
+          const blob = await window.puter.fs.read(resume.imagePath);
+          if (active) {
+            url = URL.createObjectURL(blob);
+            setImageUrl(url);
+          }
+        } catch (err) {
+          console.error("Failed to load dashboard card preview image:", err);
+        }
+      } else {
+        setImageUrl(resume.imagePath);
+      }
+    };
+
+    loadImg();
+
+    return () => {
+      active = false;
+      if (url) {
+        URL.revokeObjectURL(url);
+      }
+    };
+  }, [resume, isMockResume]);
+
+  const renderSrc = imageUrl || (isMockResume ? resume.imagePath : "/images/resume_01.png");
+
   return (
     <Link
       to={`/resume/${resume.id}`}
@@ -23,7 +59,7 @@ export default function ResumeCard({ resume }: ResumeCardProps) {
 
       <div className="relative mt-4 flex-1 w-full rounded-2xl overflow-hidden border border-brand-border bg-slate-50">
         <img
-          src={resume.imagePath}
+          src={renderSrc}
           alt={`${resume.jobTitle || "Resume"} at ${resume.companyName || "Unknown"}`}
           className="w-full h-full object-cover object-top transition-transform duration-500 group-hover:scale-[1.03]"
         />

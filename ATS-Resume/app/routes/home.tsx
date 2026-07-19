@@ -1,7 +1,10 @@
 import type { Route } from "./+types/home";
 import { Link } from "react-router";
+import { useEffect } from "react";
 import ResumeCard from "../components/ResumeCard";
 import { useResumeStore } from "../lib/store";
+import { usePuterStore } from "~/lib/puter";
+import { resumes as initialResumes } from "../../constants";
 
 export function meta({ }: Route.MetaArgs) {
   return [
@@ -11,7 +14,46 @@ export function meta({ }: Route.MetaArgs) {
 }
 
 export default function Home() {
-  const { resumes } = useResumeStore();
+  const { resumes, setResumes } = useResumeStore();
+  const { kv } = usePuterStore();
+
+  useEffect(() => {
+    const syncWithKV = async () => {
+      try {
+        const kvPairs = await kv.list("resume:*", true);
+        if (kvPairs && kvPairs.length > 0) {
+          const kvResumes: Resume[] = kvPairs.map((pair: any) => {
+            const data = JSON.parse(pair.value);
+            return {
+              id: data.id,
+              companyName: data.companyName,
+              jobTitle: data.jobTitle,
+              imagePath: data.imagePath,
+              resumePath: data.resumePath,
+              feedback: data.feedback,
+            };
+          });
+
+          // Filter out null/empty analyses
+          const validKvResumes = kvResumes.filter(r => r.feedback);
+
+          // Combine with mock initialResumes (Google, Microsoft, Apple)
+          const combined = [...validKvResumes];
+          initialResumes.forEach((mock) => {
+            if (!combined.some((r) => r.id === mock.id)) {
+              combined.push(mock);
+            }
+          });
+
+          setResumes(combined);
+        }
+      } catch (err) {
+        console.error("Failed to sync store with Puter KV:", err);
+      }
+    };
+
+    syncWithKV();
+  }, []);
 
   const totalResumes = resumes.length;
   const averageScore = totalResumes > 0 
