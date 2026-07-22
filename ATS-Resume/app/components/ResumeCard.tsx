@@ -39,6 +39,7 @@ export default function ResumeCard({ resume }: ResumeCardProps) {
       }
     };
   }, [resume, isMockResume]);
+  // the rendered has not revoked the part that wil e communicateed further 
 
   const renderSrc = imageUrl || (isMockResume ? resume.imagePath : "/images/resume_01.png");
 
